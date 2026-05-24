@@ -175,15 +175,56 @@ Aplicar en training para evitar memorización (solo ~200-400 imágenes por clase
 ## 7. Mapa de anomalía
 
 ```
-s_j = normalizar( λ1 · ||x_j - x̂_j||  +  λ2 · (1 - SSIM(x_j, x̂_j)) )
+ssim_err = promedio_w( 1 - SSIM_w(x_j, x̂_j) )   # w en {3, 7, 11}, por píxel
+s_j      = λ1 · L2(x_j, x̂_j)  +  λ2 · ssim_err
+s_j      = gaussian_blur(s_j, sigma=4)
+s_j      = normalizar globalmente sobre todas las imágenes de test de esa clase
 ```
 
 Pipeline:
-1. Error por píxel: L2 + disimilitud SSIM local (λ1=λ2=0.5)
+1. L2 por píxel + SSIM per-pixel multi-escala (λ1=λ2=0.5)
 2. **Suavizado gaussiano** con **σ=4** (estándar papers MVTec AD — Bergmann et al.)
-3. Normalizar mapa a [0,1]
+3. Normalizar globalmente por clase (no por imagen)
 
 **Por qué σ=4:** los defectos son regiones conexas de decenas de píxeles. σ=4 elimina ruido de alta frecuencia (píxeles sueltos) sin borrar defectos reales. Valores menores (σ=1-2) → mapa ruidoso → falsos positivos. Valores mayores (σ=8+) → defectos pequeños desaparecen → falsos negativos.
+
+### 7.1 SSIM per-pixel (no el escalar de pytorch-msssim)
+
+`pytorch_msssim.ssim(size_average=False)` devuelve un escalar por imagen, no un mapa espacial. Para localización, se implementa el mapa SSIM real con una ventana Gaussiana deslizante por convolución separable:
+
+```python
+# Para cada ventana w en {3, 7, 11}:
+mu_x, mu_y = smooth(x), smooth(y)       # medias locales
+sigma_x, sigma_y, sigma_xy = ...        # varianzas y covarianza locales
+ssim_map = (2*mu_x*mu_y + C1)*(2*sigma_xy + C2) /
+           ((mu_x^2 + mu_y^2 + C1)*(sigma_x + sigma_y + C2))
+# output: [B, 1, H, W] — un valor por píxel
+```
+
+Ventana 3: detecta errores de textura fina (grietas pequeñas, puntos).
+Ventana 11: detecta diferencias estructurales (bordes, formas).
+El promedio de las tres escalas es robusto a defectos de distintos tamaños.
+
+Resultado: avg F1 de 0.080 (L2 solo efectivo) a **0.140** sin reentrenar.
+
+### 7.2 Feature-space map (experimento, descartado)
+
+Se probó combinar el mapa pixel-level con un mapa de diferencia en espacio de features del encoder:
+
+```
+combined = (1 - alpha) * pixel_norm + alpha * feat_norm
+```
+
+Sweep de alpha={0.0, 0.1, ..., 0.7, 1.0} sobre clases representativas (hazelnut, wood, capsule, leather, metal_nut, cable):
+- alpha=0.0 (solo pixel): mejor promedio (0.2204)
+- El feature map ayuda a wood y capsule, pero penaliza hazelnut y leather
+- Efecto neto negativo en el promedio
+
+**Decision: alpha=0.0 (solo mapa pixel, multi-scale SSIM).** El feature map queda como parámetro opcional `feat_alpha` para experimentación futura.
+
+### 7.3 Normalización global vs. por imagen
+
+Normalización global por clase: imágenes sanas (error bajo) quedan en valores bajos globalmente. Normalización por imagen: cada imagen se escala a [0,1] independientemente, lo que hace que incluso imágenes sanas lleguen a 1.0 y generen falsos positivos masivos al umbralizar.
 
 ---
 
@@ -264,7 +305,17 @@ F1 = 2·TP / ( 2·TP + FP + FN )
 4. **Calibrar `LATENT_DIM`** con checklist de la sección 3.1
 5. **Umbral + morfología**: implementar y medir F1 en esa clase
 6. **Escalar a las 15 clases** en bucle
-7. **Entregables**: tabla F1 por clase + figuras (3/clase)
+7. **Evaluar con multi-scale SSIM per-pixel**: `python main.py --eval-only --full`
+8. **Entregables**: tabla F1 por clase + figuras (3/clase)
+
+### Experimentos realizados y conclusiones
+
+| Experimento | Resultado | Conclusion |
+|---|---|---|
+| LATENT_DIM=128, todas las clases | avg F1=0.080 | Baseline |
+| LATENT_DIM=64, clases borderline | avg F1<0.080 | 64 comprime demasiado, regresion en capsule |
+| Multi-scale per-pixel SSIM (alpha=0.0) | avg F1=0.140 | +75% sin reentrenar. Resultado final |
+| Feature-space map (alpha=0.3) | avg F1=0.134 | Inconsistente: ayuda wood/capsule, penaliza hazelnut/leather |
 
 ### Fase A — Smoke test
 
@@ -303,8 +354,10 @@ Verificar al terminar smoke test:
 | Modelo | β-VAE convolucional |
 | `LATENT_DIM` arranque | 128 → calibrar |
 | β | 0.5 fijo |
-| SSIM | `pytorch-msssim` |
-| λ1, λ2 | 0.5, 0.5 (subir λ2 si textura falla) |
+| SSIM en training | `pytorch-msssim` (escalar, correcto para loss) |
+| SSIM en evaluacion | Per-pixel sliding window, ventanas {3, 7, 11} |
+| λ1, λ2 | 0.5, 0.5 |
+| feat_alpha | 0.0 (feature map descartado) |
 | Umbral | Barrido por clase en test |
 | Split validación | Ninguno |
 | Morfología | Apertura + cierre desde inicio |
@@ -315,3 +368,10 @@ Verificar al terminar smoke test:
 | Augmentation | hflip + vflip + rot±15° |
 | Normalización | [0,1] |
 | Figuras | 3/clase: 1 good + 2 defectuosas |
+| Resultado final | avg F1=0.140 (baseline 0.080) |
+
+### Fallos estructurales — no resolubles sin cambio de arquitectura
+
+**Screw, toothbrush (variacion de orientacion):** Cada imagen de entrenamiento tiene el objeto en un angulo distinto. El VAE promedia todos los angulos y aprende un blob gris. El mapa de anomalia se activa en todo el objeto, no en el defecto. Fix requiere pre-alinear las imagenes por orientacion antes de entrenar.
+
+**Grid, carpet (textura periodica):** El VAE no puede reproducir la fase del patron periodico. El error de reconstruccion es uniformemente alto en toda la imagen. Los defectos generan un error marginalmente mayor que la textura normal, insuficiente para discriminar. Fix requiere modelos que operen en espacio de frecuencia o features preentrenadas (fuera del marco VAE).

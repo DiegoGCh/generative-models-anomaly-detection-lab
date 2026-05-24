@@ -61,16 +61,23 @@ python main.py --full --category carpet
 
 # Re-run borderline classes with LATENT_DIM=64
 python main.py --rerun
+
+# Re-evaluate existing checkpoints with improved anomaly map (no retraining)
+python main.py --eval-only --full
+
+# Re-evaluate single class
+python main.py --eval-only --category hazelnut
 ```
 
 ## What gets saved
 
 ```
-checkpoints/          # model weights per class (LATENT_DIM=128)
-checkpoints_rerun/    # model weights per class (LATENT_DIM=64)
-results/              # figures and F1 curves per class
-results_rerun/        # same but for the rerun
-results/results.json  # F1 table
+checkpoints/           # model weights per class (LATENT_DIM=128)
+checkpoints_rerun/     # model weights per class (LATENT_DIM=64)
+results/               # figures and F1 curves, baseline evaluation
+results_rerun/         # same but for the LATENT_DIM=64 rerun
+results_improved/      # figures and F1 curves, multi-scale SSIM evaluation
+results/results.json   # F1 table
 ```
 
 Figures per class: one good image (map should be flat), two defective images (map should fire on the defect).

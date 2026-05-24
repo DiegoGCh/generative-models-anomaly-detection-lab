@@ -13,6 +13,8 @@ checkpoints/
 checkpoints_rerun/
 results/
 results_rerun/
+results_improved/
+results_rerun_improved/
 *.pth
 *.pt
 *.ckpt

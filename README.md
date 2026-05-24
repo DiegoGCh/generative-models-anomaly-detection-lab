@@ -86,12 +86,15 @@ Both reconstruction and KL terms are normalized by their number of elements befo
 ## Anomaly map
 
 ```
-score = lambda1 * L2(x, x_hat) + lambda2 * (1 - SSIM(x, x_hat))
-score = gaussian_blur(score, sigma=4)
-score = normalize globally across all test images for that class
+ssim_err = mean over w in {3, 7, 11} of (1 - SSIM_w(x, x_hat))   # per-pixel
+score    = lambda1 * L2(x, x_hat) + lambda2 * ssim_err
+score    = gaussian_blur(score, sigma=4)
+score    = normalize globally across all test images for that class
 ```
 
-Global normalization matters. Per-image normalization means every image, including clean ones, gets normalized to [0, 1] and fires at low thresholds. With global normalization, a clean image that reconstructs well stays at low values across the board.
+**Multi-scale per-pixel SSIM.** The pytorch-msssim library with `size_average=False` returns one SSIM value per image, not per pixel. For spatial localization, a sliding Gaussian window at three scales is used instead. Small windows (3) detect fine texture differences; large windows (11) detect structural differences. Averaging across scales makes the map robust to defects of different sizes.
+
+**Global normalization.** Per-image normalization means every image, including clean ones, gets normalized to [0, 1] and fires at low thresholds. With global normalization, a clean image that reconstructs well stays at low values across the board.
 
 Gaussian sigma=4 is standard for MVTec (Bergmann et al., 2019). It removes isolated pixel noise without blurring actual defect regions.
 
@@ -101,24 +104,28 @@ We sweep 50 threshold values on the test set and report F1 at the best one per c
 
 ## Results summary
 
-| Class | F1 (latent=128) | Notes |
-|---|---|---|
-| metal_nut | 0.172 | map fires on defect |
-| hazelnut | 0.169 | works well |
-| tile | 0.136 | works well |
-| cable | 0.121 | ok |
-| bottle | 0.104 | marginal |
-| pill | 0.084 | low |
-| leather | 0.077 | low |
-| wood | 0.077 | low |
-| transistor | 0.071 | low |
-| capsule | 0.058 | low but F1 curve has a real peak |
-| zipper | 0.040 | collapsed |
-| carpet | 0.031 | structural failure |
-| toothbrush | 0.029 | collapsed |
-| grid | 0.015 | structural failure |
-| screw | 0.008 | structural failure |
-| **avg** | **0.080** | |
+Two evaluation runs on the same trained model (LATENT_DIM=128, 50 epochs):
+
+| Class | F1 baseline | F1 improved | Notes |
+|---|---|---|---|
+| hazelnut | 0.169 | **0.378** | map fires on defect |
+| metal_nut | 0.172 | **0.243** | map fires on defect |
+| bottle | 0.104 | **0.196** | ring pattern, marginal |
+| leather | 0.077 | **0.195** | map fires on defect correctly |
+| cable | 0.121 | **0.202** | partial detection |
+| wood | 0.077 | **0.219** | detects large defects |
+| zipper | 0.040 | **0.119** | partial |
+| pill | 0.084 | **0.116** | fires on text imprint, not actual defect |
+| tile | 0.136 | **0.122** | slight regression (small window SSIM penalizes regular texture) |
+| transistor | 0.071 | **0.074** | partial |
+| capsule | 0.058 | **0.086** | map fires on defect, small defects hurt F1 |
+| screw | 0.008 | **0.053** | structural failure |
+| grid | 0.015 | **0.032** | structural failure |
+| carpet | 0.031 | **0.031** | structural failure |
+| toothbrush | 0.029 | **0.029** | structural failure |
+| **avg** | **0.080** | **0.140** | |
+
+The improved evaluation uses multi-scale per-pixel SSIM (windows 3, 7, 11) instead of a single scalar SSIM. The original pytorch-msssim call with `size_average=False` returns one value per image, not per pixel, so the SSIM term in the baseline contributed nothing to spatial localization. With per-pixel SSIM, the anomaly map captures both fine-grained texture differences (small window) and structural differences (large window), improving average F1 by 75% without retraining.
 
 Classes marked as structural failure share a pattern: the VAE outputs a flat gray blob for reconstruction. The model learned the background but not the object. This happens with objects that vary in orientation across images (screw, toothbrush) or with periodic textures where reconstruction error is uniformly high everywhere (grid, carpet). Reducing LATENT_DIM does not fix this. It is a known limitation of reconstruction-based methods for these specific classes.
 

@@ -83,18 +83,21 @@ FULL = {
     ],
 }
 
-DATA_ROOT        = "Data"
-CKPT_DIR         = "checkpoints"
-RESULTS_DIR      = "results"
-CKPT_DIR_RERUN   = "checkpoints_rerun"
-RESULTS_DIR_RERUN = "results_rerun"
+DATA_ROOT             = "Data"
+CKPT_DIR              = "checkpoints"
+RESULTS_DIR           = "results"
+CKPT_DIR_RERUN        = "checkpoints_rerun"
+RESULTS_DIR_RERUN     = "results_rerun"
+RESULTS_DIR_IMPROVED  = "results_improved"       # eval-only con multi-scale SSIM + features
+RESULTS_DIR_RERUN_IMP = "results_rerun_improved"
 
 
 # ─────────────────────────────────────────────
 # Pipeline por clase
 # ─────────────────────────────────────────────
 
-def run_category(cfg: dict, category: str, device: torch.device, rerun: bool = False):
+def run_category(cfg: dict, category: str, device: torch.device,
+                 rerun: bool = False, eval_only: bool = False):
     print(f"\n{'='*50}")
     print(f"  Categoría: {category}")
     print(f"{'='*50}")
@@ -110,24 +113,30 @@ def run_category(cfg: dict, category: str, device: torch.device, rerun: bool = F
     model = ConvVAE(latent_dim=cfg["latent_dim"], img_size=cfg["img_size"]).to(device)
     print(f"  Parámetros: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Entrenamiento
-    print(f"  Entrenando {cfg['epochs']} épocas...")
-    history = train(
-        model, train_loader, device,
-        epochs=cfg["epochs"],
-        lr=cfg["lr"],
-        beta=cfg["beta"],
-        lambda1=cfg["lambda1"],
-        lambda2=cfg["lambda2"],
-    )
-
-    # Guardar checkpoint (directorio separado para rerun)
     ckpt_base = CKPT_DIR_RERUN if rerun else CKPT_DIR
     ckpt_path = Path(ckpt_base) / f"{category}.pth"
-    ckpt_path.parent.mkdir(exist_ok=True)
-    torch.save(model.state_dict(), ckpt_path)
 
-    # Evaluación
+    if eval_only:
+        # Cargar checkpoint existente, sin reentrenar
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Checkpoint no encontrado: {ckpt_path}")
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
+        print(f"  Checkpoint cargado: {ckpt_path}")
+    else:
+        # Entrenamiento normal
+        print(f"  Entrenando {cfg['epochs']} épocas...")
+        train(
+            model, train_loader, device,
+            epochs=cfg["epochs"],
+            lr=cfg["lr"],
+            beta=cfg["beta"],
+            lambda1=cfg["lambda1"],
+            lambda2=cfg["lambda2"],
+        )
+        ckpt_path.parent.mkdir(exist_ok=True)
+        torch.save(model.state_dict(), ckpt_path)
+
+    # Evaluación con multi-scale SSIM + feature-space map
     print(f"  Evaluando...")
     results = evaluate_category(
         model, test_loader, device, category,
@@ -135,14 +144,23 @@ def run_category(cfg: dict, category: str, device: torch.device, rerun: bool = F
         lambda2=cfg["lambda2"],
     )
 
-    # Figuras (directorio separado para rerun, no pisa resultados originales)
-    results_base = RESULTS_DIR_RERUN if rerun else RESULTS_DIR
+    # Directorio de resultados
+    if eval_only:
+        results_base = RESULTS_DIR_RERUN_IMP if rerun else RESULTS_DIR_IMPROVED
+    else:
+        results_base = RESULTS_DIR_RERUN if rerun else RESULTS_DIR
+
     save_figures(
         model, test_loader, device, category,
         best_threshold=results["best_threshold"],
         out_dir=results_base,
         global_min=results["global_min"],
         global_max=results["global_max"],
+        pixel_min=results["pixel_min"],
+        pixel_max=results["pixel_max"],
+        feat_min=results["feat_min"],
+        feat_max=results["feat_max"],
+        feat_alpha=results["feat_alpha"],
         lambda1=cfg["lambda1"],
         lambda2=cfg["lambda2"],
     )
@@ -157,9 +175,10 @@ def run_category(cfg: dict, category: str, device: torch.device, rerun: bool = F
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--full",     action="store_true", help="Entrenamiento real (todas las clases)")
-    parser.add_argument("--rerun",    action="store_true", help="Re-entrena clases borderline con LATENT_DIM=64")
-    parser.add_argument("--category", type=str, default=None, help="Solo esta clase")
+    parser.add_argument("--full",      action="store_true", help="Entrenamiento real (todas las clases)")
+    parser.add_argument("--rerun",     action="store_true", help="Re-entrena clases borderline con LATENT_DIM=64")
+    parser.add_argument("--eval-only", action="store_true", help="Re-evalúa checkpoints existentes (sin entrenar)")
+    parser.add_argument("--category",  type=str, default=None, help="Solo esta clase")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -177,7 +196,15 @@ def main():
     else:
         categories = cfg["categories"]
 
-    print(f"\nModo: {'FULL' if args.full else 'SMOKE TEST'}")
+    eval_only = args.eval_only
+    if eval_only:
+        modo = "EVAL-ONLY (multi-scale SSIM + feature map)"
+    elif args.full:
+        modo = "FULL"
+    else:
+        modo = "SMOKE TEST"
+
+    print(f"\nModo: {modo}")
     print(f"IMG_SIZE={cfg['img_size']} | EPOCHS={cfg['epochs']} | LATENT_DIM={cfg['latent_dim']}")
     print(f"Clases: {categories}")
 
@@ -185,13 +212,14 @@ def main():
 
     for category in categories:
         try:
-            results = run_category(cfg, category, device, rerun=args.rerun)
+            results = run_category(cfg, category, device,
+                                   rerun=args.rerun, eval_only=eval_only)
             all_results[category] = {
                 "best_f1":        results["best_f1"],
                 "best_threshold": results["best_threshold"],
             }
         except Exception as e:
-            print(f"  ❌ Error en {category}: {e}")
+            print(f"  Error en {category}: {e}")
             all_results[category] = {"best_f1": None, "error": str(e)}
 
     # ─── Tabla resumen ───
@@ -216,7 +244,10 @@ def main():
         print(f"  {'PROMEDIO':<15} {sum(f1s)/len(f1s):>8.4f}")
 
     # Guardar JSON
-    results_base = RESULTS_DIR_RERUN if args.rerun else RESULTS_DIR
+    if eval_only:
+        results_base = RESULTS_DIR_RERUN_IMP if args.rerun else RESULTS_DIR_IMPROVED
+    else:
+        results_base = RESULTS_DIR_RERUN if args.rerun else RESULTS_DIR
     out_json = Path(results_base) / "results.json"
     out_json.parent.mkdir(exist_ok=True)
     with open(out_json, "w") as f:

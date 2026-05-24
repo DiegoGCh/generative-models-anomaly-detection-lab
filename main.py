@@ -5,6 +5,21 @@ Uso:
   python main.py                         # smoke test (bottle, 5 epochs, 128px)
   python main.py --full                  # entrenamiento real (todas las clases)
   python main.py --full --category wood  # solo una clase en full
+  python main.py --rerun                 # re-entrena clases borderline con LATENT_DIM=64
+
+Decisiones de diseño documentadas:
+  - LATENT_DIM=128 (run original): punto de arranque acordado en el plan.
+    Resultado: clases con objetos fijos (metal_nut, hazelnut, tile) funcionan bien.
+    Clases con objetos de orientación variable o textura fina (screw, grid, toothbrush)
+    fallan estructuralmente — el VAE aprende solo el fondo y promedia el objeto.
+    No es un problema de LATENT_DIM sino de la limitación del método de reconstrucción.
+
+  - LATENT_DIM=64 (--rerun): se prueba en clases "borderline" donde el mapa SÍ
+    activa pero la localización no es precisa (F1 bajo pero curva con pico claro).
+    La hipótesis: un cuello de botella más estrecho fuerza más compresión → el error
+    se concentra más en zonas anómalas → mejor precisión de máscara → mayor F1.
+    Se excluyen las clases colapsadas (screw, grid, toothbrush, zipper, carpet) porque
+    su fallo es estructural, no de capacidad del latente.
 """
 
 import argparse
@@ -34,6 +49,24 @@ SMOKE = {
     "categories": ["bottle"],
 }
 
+# Clases borderline: mapa activa pero localización imprecisa.
+# Re-entrenar con LATENT_DIM=64 para forzar más compresión
+# y concentrar el error en zonas anómalas.
+# NO incluye: screw, grid, toothbrush, zipper, carpet (fallo estructural).
+RERUN_CATEGORIES = ["bottle", "capsule", "leather", "pill", "transistor", "wood"]
+
+RERUN = {
+    "img_size":   256,
+    "epochs":     50,
+    "latent_dim": 64,   # ← más estrecho que el run original (128)
+    "beta":       0.5,
+    "lambda1":    0.5,
+    "lambda2":    0.5,
+    "batch_size": 16,
+    "lr":         1e-4,
+    "categories": RERUN_CATEGORIES,
+}
+
 FULL = {
     "img_size":   256,
     "epochs":     50,
@@ -50,16 +83,18 @@ FULL = {
     ],
 }
 
-DATA_ROOT   = "Data"
-CKPT_DIR    = "checkpoints"
-RESULTS_DIR = "results"
+DATA_ROOT        = "Data"
+CKPT_DIR         = "checkpoints"
+RESULTS_DIR      = "results"
+CKPT_DIR_RERUN   = "checkpoints_rerun"
+RESULTS_DIR_RERUN = "results_rerun"
 
 
 # ─────────────────────────────────────────────
 # Pipeline por clase
 # ─────────────────────────────────────────────
 
-def run_category(cfg: dict, category: str, device: torch.device):
+def run_category(cfg: dict, category: str, device: torch.device, rerun: bool = False):
     print(f"\n{'='*50}")
     print(f"  Categoría: {category}")
     print(f"{'='*50}")
@@ -86,8 +121,9 @@ def run_category(cfg: dict, category: str, device: torch.device):
         lambda2=cfg["lambda2"],
     )
 
-    # Guardar checkpoint
-    ckpt_path = Path(CKPT_DIR) / f"{category}.pth"
+    # Guardar checkpoint (directorio separado para rerun)
+    ckpt_base = CKPT_DIR_RERUN if rerun else CKPT_DIR
+    ckpt_path = Path(ckpt_base) / f"{category}.pth"
     ckpt_path.parent.mkdir(exist_ok=True)
     torch.save(model.state_dict(), ckpt_path)
 
@@ -99,15 +135,18 @@ def run_category(cfg: dict, category: str, device: torch.device):
         lambda2=cfg["lambda2"],
     )
 
-    # Figuras
+    # Figuras (directorio separado para rerun, no pisa resultados originales)
+    results_base = RESULTS_DIR_RERUN if rerun else RESULTS_DIR
     save_figures(
         model, test_loader, device, category,
         best_threshold=results["best_threshold"],
-        out_dir=RESULTS_DIR,
+        out_dir=results_base,
+        global_min=results["global_min"],
+        global_max=results["global_max"],
         lambda1=cfg["lambda1"],
         lambda2=cfg["lambda2"],
     )
-    save_f1_curve(results, RESULTS_DIR)
+    save_f1_curve(results, results_base)
 
     return results
 
@@ -119,13 +158,19 @@ def run_category(cfg: dict, category: str, device: torch.device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--full",     action="store_true", help="Entrenamiento real (todas las clases)")
-    parser.add_argument("--category", type=str, default=None, help="Solo esta clase (con --full)")
+    parser.add_argument("--rerun",    action="store_true", help="Re-entrena clases borderline con LATENT_DIM=64")
+    parser.add_argument("--category", type=str, default=None, help="Solo esta clase")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    cfg = FULL if args.full else SMOKE
+    if args.rerun:
+        cfg = RERUN
+    elif args.full:
+        cfg = FULL
+    else:
+        cfg = SMOKE
 
     if args.category:
         categories = [args.category]
@@ -140,7 +185,7 @@ def main():
 
     for category in categories:
         try:
-            results = run_category(cfg, category, device)
+            results = run_category(cfg, category, device, rerun=args.rerun)
             all_results[category] = {
                 "best_f1":        results["best_f1"],
                 "best_threshold": results["best_threshold"],
@@ -171,7 +216,8 @@ def main():
         print(f"  {'PROMEDIO':<15} {sum(f1s)/len(f1s):>8.4f}")
 
     # Guardar JSON
-    out_json = Path(RESULTS_DIR) / "results.json"
+    results_base = RESULTS_DIR_RERUN if args.rerun else RESULTS_DIR
+    out_json = Path(results_base) / "results.json"
     out_json.parent.mkdir(exist_ok=True)
     with open(out_json, "w") as f:
         json.dump(all_results, f, indent=2)

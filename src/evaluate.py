@@ -145,8 +145,10 @@ def evaluate_category(model, test_loader, device, category: str,
         "best_threshold": best_thresh,
         "f1_curve":       f1_curve,
         "thresholds":     thresholds.tolist(),
-        "all_maps":       all_maps,
+        "all_maps":       all_maps,     # ya normalizados globalmente
         "all_masks":      all_masks,
+        "global_min":     float(global_min),
+        "global_max":     float(global_max),
     }
 
 
@@ -157,6 +159,8 @@ def evaluate_category(model, test_loader, device, category: str,
 def save_figures(model, test_loader, device, category: str,
                  best_threshold: float,
                  out_dir: str,
+                 global_min: float = 0.0,
+                 global_max: float = 1.0,
                  lambda1: float = 0.5,
                  lambda2: float = 0.5,
                  sigma: float = 4.0,
@@ -166,6 +170,8 @@ def save_figures(model, test_loader, device, category: str,
     """
     Guarda figuras: 1 good + n_defect defectuosas.
     Columnas: input | reconstruction | anomaly map | thresholded mask
+    Usa global_min/global_max para normalizar los mapas igual que evaluate_category,
+    así el best_threshold es consistente con lo que se ve en las figuras.
     """
     out_path = Path(out_dir) / category
     out_path.mkdir(parents=True, exist_ok=True)
@@ -183,7 +189,12 @@ def save_figures(model, test_loader, device, category: str,
 
         amap = anomaly_map(model, img, device, lambda1, lambda2, sigma)
 
-        # Máscara binarizada
+        # Normalizar igual que en evaluate_category (escala global por clase)
+        if global_max > global_min:
+            amap = (amap - global_min) / (global_max - global_min)
+            amap = np.clip(amap, 0, 1)
+
+        # Máscara binarizada con el mismo threshold calibrado con F1
         pred_bin = (amap >= best_threshold).astype(np.uint8) * 255
         pred_bin = apply_morphology(pred_bin, morph_kernel)
 

@@ -10,10 +10,16 @@ Data/
 
 # Checkpoints y resultados pesados
 checkpoints/
+checkpoints_rerun/
 results/
+results_rerun/
 *.pth
 *.pt
 *.ckpt
+
+# Scripts y docs de análisis local (no van al repo)
+report.py
+ANALYSIS.md
 
 # Python
 __pycache__/

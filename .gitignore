@@ -1,0 +1,39 @@
+# Dataset — no pushear
+Data/
+*.tar
+*.tar.xz
+*.tar.gz
+*.zip
+
+# Documentación del proyecto (PDF enunciado)
+*.pdf
+
+# Checkpoints y resultados pesados
+checkpoints/
+results/
+*.pth
+*.pt
+*.ckpt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Entorno virtual
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

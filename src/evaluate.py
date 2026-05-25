@@ -406,7 +406,7 @@ def save_figures(model, test_loader, device, category: str,
             # Overlay RGBA: solo pixeles GT=1 reciben color verde solido.
             # GT=0 queda completamente transparente → no agrega tinte al fondo.
             gt_rgba = np.zeros((*gt_np.shape, 4), dtype=np.float32)
-            gt_rgba[gt_np > 0.5] = [0.0, 0.78, 0.2, 1.0]  # verde solido, alpha=1 → mismo tono siempre
+            gt_rgba[gt_np > 0.5] = [0.0, 0.78, 0.2, 0.6]  # verde semitransparente → overlap visible
             axes[3].imshow(gt_rgba)
 
             # Leyenda explicita: blanco = modelo, verde = ground truth

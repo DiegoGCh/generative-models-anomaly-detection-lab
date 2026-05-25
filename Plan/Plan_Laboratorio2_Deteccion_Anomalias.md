@@ -172,13 +172,6 @@ Aplicar en training para evitar memorización (solo ~200-400 imágenes por clase
 
 **Cuidado con la rotacion:** para clases con objetos de orientacion fija (bottle, tile, metal_nut) la rotacion puede perjudicar la reconstruccion. El VAE promedia todas las orientaciones entrenadas → blob sin textura dirigida. Para esas clases, reducir a ±5° o eliminar. Para clases con variacion real de orientacion (hazelnut, screw) la rotacion es inevitable pero el problema del blob no tiene solucion dentro del marco VAE.
 
-**Test-Time Augmentation (TTA) — mejora gratuita sin reentrenar:**
-```python
-recon_orig = model.reconstruct(x)
-recon_flip = model.reconstruct(hflip(x))
-recon_final = 0.5 * recon_orig + 0.5 * hflip(recon_flip)
-```
-Promedia reconstrucciones de la imagen original y su flip horizontal. Reduce ruido en el mapa de anomalia sin reentrenar.
 
 ---
 
@@ -430,9 +423,6 @@ Las imagenes "good" no tienen overlay verde (no hay GT). Manchas blancas en good
 | Reducir rotacion a ±5° o eliminar | bottle, tile, metal_nut | Si | Baja |
 | Quitar RandomVerticalFlip | pill, capsule, screw | Si | Baja |
 | Color jitter (brightness/contrast ±10%) | todas | Si | Baja |
-| Test-Time Augmentation (TTA) | todas | No | Media |
-
-**TTA explicado:** en lugar de pasar la imagen una vez al modelo, se pasa la imagen original Y su version aumentada (ej. flip horizontal), se reconstruyen ambas, se promedia el mapa de error. El ruido del mapa tiende a ser inconsistente entre las dos versiones → se cancela. El defecto real aparece en ambas → se refuerza. Es tecnica estandar en vision por computadora cuando se quiere mejorar inferencia sin reentrenar.
 
 ### Fallos estructurales — no resolubles sin cambio de arquitectura
 

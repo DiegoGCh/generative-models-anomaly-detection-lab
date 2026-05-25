@@ -11,10 +11,12 @@ Data/
 # Checkpoints y resultados pesados
 checkpoints/
 checkpoints_rerun/
+checkpoints_v2/
 results/
 results_rerun/
 results_improved/
 results_rerun_improved/
+results_v2/
 *.pth
 *.pt
 *.ckpt

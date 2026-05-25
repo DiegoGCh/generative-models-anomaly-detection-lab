@@ -35,34 +35,49 @@ pip install -r requirements.txt
 
 ### Checkpoints (pre-trained weights)
 
-Trained weights for all 15 classes are available here:
+Trained weights for all 15 classes (baseline and V2) are available here:
 [Google Drive - checkpoints/](https://drive.google.com/drive/folders/1jpYVJED45yUzopOt_WvAs22kEDuP0YYK?usp=drive_link)
 
-Download the `checkpoints/` folder and place it at the root of the repo:
+Download both folders and place them at the root of the repo:
 
 ```
 Lab2/
-  checkpoints/       <-- put it here
+  checkpoints/       <-- baseline weights (LATENT_DIM=128)
     bottle.pth
     cable.pth
-    capsule.pth
+    ...
+  checkpoints_v2/    <-- V2 weights (perceptual loss + KL annealing)
+    bottle.pth
+    cable.pth
     ...
   src/
   main.py
   ...
 ```
 
-Then run the improved evaluation directly, no training needed:
+**Baseline checkpoints** — evaluate with multi-scale per-pixel SSIM (avg F1=0.140):
 
 ```bash
-# Evaluate all 15 classes with multi-scale per-pixel SSIM
+# All 15 classes
 python main.py --eval-only --full
 
-# Evaluate a single class
+# Single class
 python main.py --eval-only --category hazelnut
 ```
 
-Results and figures are saved to `results_improved/`.
+Results saved to `results_improved/`.
+
+**V2 checkpoints** — perceptual loss + KL annealing (avg F1=0.150):
+
+```bash
+# All 15 classes
+python main.py --eval-only --v2 --full
+
+# Single class
+python main.py --eval-only --v2 --category hazelnut
+```
+
+Results saved to `results_v2/`.
 
 ### Dataset
 

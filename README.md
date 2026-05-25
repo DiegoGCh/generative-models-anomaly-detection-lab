@@ -193,9 +193,6 @@ Good images have no green overlay (no GT mask). White spots on good images are f
 | Reduce rotation to +-5 deg or remove | bottle, tile, metal_nut (fixed orientation) | Yes |
 | Remove RandomVerticalFlip | pill, capsule, screw | Yes |
 | Color jitter (brightness/contrast +-10%) | all classes | Yes |
-| Test-time augmentation (TTA) | all classes | No |
-
-**Test-time augmentation:** instead of passing the image once, pass the original and its horizontal flip, reconstruct both, average the error maps. Noise in the map is inconsistent across augmentations and cancels out. Real defects appear in both and reinforce. Standard technique in computer vision to improve inference without retraining.
 
 **Why rotation hurts some classes:** the VAE learns to reconstruct the average of all training orientations. For objects with fixed orientation (bottle always upright, tile always flat) this average is still a recognizable object. For objects with variable orientation (hazelnut, screw) the average across rotations becomes a featureless blob. The anomaly map then fires everywhere on the object surface, not just on the defect.
 

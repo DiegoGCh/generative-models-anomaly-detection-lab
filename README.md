@@ -100,20 +100,31 @@ python main.py --eval-only --full
 
 # Re-evaluate single class
 python main.py --eval-only --category hazelnut
+
+# V2: train with perceptual loss + KL annealing (all 15 classes)
+python main.py --v2 --full
+
+# V2: single class
+python main.py --v2 --category bottle
+
+# V2: re-evaluate existing V2 checkpoints (no retraining)
+python main.py --eval-only --v2 --full
 ```
 
 ## What gets saved
 
 ```
-checkpoints/           # model weights per class (LATENT_DIM=128)
+checkpoints/           # model weights per class (LATENT_DIM=128, baseline)
 checkpoints_rerun/     # model weights per class (LATENT_DIM=64)
+checkpoints_v2/        # model weights per class (perceptual loss + KL annealing)
 results/               # figures and F1 curves, baseline evaluation
 results_rerun/         # same but for the LATENT_DIM=64 rerun
 results_improved/      # figures and F1 curves, multi-scale SSIM evaluation
+results_v2/            # figures and F1 curves, V2 evaluation
 results/results.json   # F1 table
 ```
 
-Figures per class: one good image (map should be flat), two defective images (map should fire on the defect).
+Figures per class: one good image (map should be flat), five defective images (map should fire on the defect).
 
 ## Loss function
 
@@ -190,30 +201,34 @@ Good images have no green overlay (no GT mask). White spots on good images are f
 
 ## Results summary
 
-Two evaluation runs on the same trained model (LATENT_DIM=128, 50 epochs):
+Three runs, same architecture (LATENT_DIM=128, 50 epochs, 256px):
 
-| Class | F1 baseline | F1 improved | Notes |
-|---|---|---|---|
-| hazelnut | 0.169 | **0.378** | map fires on defect |
-| metal_nut | 0.172 | **0.243** | map fires on defect |
-| bottle | 0.104 | **0.196** | ring pattern, marginal |
-| leather | 0.077 | **0.195** | map fires on defect correctly |
-| cable | 0.121 | **0.202** | partial detection |
-| wood | 0.077 | **0.219** | detects large defects |
-| zipper | 0.040 | **0.119** | partial |
-| pill | 0.084 | **0.116** | fires on text imprint, not actual defect |
-| tile | 0.136 | **0.122** | slight regression (small window SSIM penalizes regular texture) |
-| transistor | 0.071 | **0.074** | partial |
-| capsule | 0.058 | **0.086** | map fires on defect, small defects hurt F1 |
-| screw | 0.008 | **0.053** | structural failure |
-| grid | 0.015 | **0.032** | structural failure |
-| carpet | 0.031 | **0.031** | structural failure |
-| toothbrush | 0.029 | **0.029** | structural failure |
-| **avg** | **0.080** | **0.140** | |
+| Class | Baseline | Improved | V2 | Notes |
+|---|---|---|---|---|
+| hazelnut | 0.169 | 0.378 | **0.380** | map fires on defect |
+| metal_nut | 0.172 | 0.243 | **0.257** | map fires on defect |
+| bottle | 0.104 | 0.196 | **0.259** | biggest V2 gain — perceptual loss fixes blob |
+| leather | 0.077 | 0.195 | **0.206** | map fires correctly |
+| cable | 0.121 | 0.202 | **0.200** | partial detection |
+| wood | 0.077 | 0.219 | **0.219** | detects large defects |
+| pill | 0.084 | 0.116 | **0.148** | fires on text imprint area |
+| tile | 0.136 | 0.122 | **0.122** | slight regression (small SSIM window penalizes regular texture) |
+| zipper | 0.040 | 0.119 | **0.121** | partial |
+| toothbrush | 0.029 | 0.029 | **0.067** | V2 helps despite structural failure |
+| transistor | 0.071 | 0.074 | **0.075** | partial |
+| capsule | 0.058 | 0.086 | **0.084** | small defects hurt F1 |
+| screw | 0.008 | 0.053 | **0.050** | structural failure |
+| carpet | 0.031 | 0.031 | **0.031** | structural failure |
+| grid | 0.015 | 0.032 | **0.030** | structural failure |
+| **avg** | **0.080** | **0.140** | **0.150** | |
 
-The improved evaluation uses multi-scale per-pixel SSIM (windows 3, 7, 11) instead of a single scalar SSIM. The original pytorch-msssim call with `size_average=False` returns one value per image, not per pixel, so the SSIM term in the baseline contributed nothing to spatial localization. With per-pixel SSIM, the anomaly map captures both fine-grained texture differences (small window) and structural differences (large window), improving average F1 by 75% without retraining.
+**Baseline:** L2 anomaly map only, single-scale SSIM scalar (not spatial).
 
-Classes marked as structural failure share a pattern: the VAE outputs a flat gray blob for reconstruction. The model learned the background but not the object. This happens with objects that vary in orientation across images (screw, toothbrush) or with periodic textures where reconstruction error is uniformly high everywhere (grid, carpet). Reducing LATENT_DIM does not fix this. It is a known limitation of reconstruction-based methods for these specific classes.
+**Improved:** same trained model, multi-scale per-pixel SSIM (windows 3, 7, 11). The original pytorch-msssim call returns one scalar per image, not a spatial map — the SSIM term contributed nothing to localization. With sliding Gaussian window SSIM, avg F1 improved 75% without retraining.
+
+**V2:** retrained with perceptual loss (VGG16 features, lambda3=0.01) and KL annealing (beta 0→0.5 over 10 epochs). Biggest gains on classes where the baseline produced gray blobs (bottle +32%, toothbrush +131%). Structural failures (carpet, grid, screw) are unchanged — the issue is fundamental to reconstruction-based detection, not the loss function.
+
+Classes marked as structural failure share a pattern: the VAE reconstructs a flat blob instead of the object. This happens when objects vary in orientation across training images (screw, toothbrush — the VAE averages all angles into a blob) or when periodic textures make reconstruction error uniformly high everywhere (grid, carpet — the VAE cannot represent the phase of a repeating pattern). Reducing LATENT_DIM does not fix this. It is a known limitation of reconstruction-based anomaly detection.
 
 ## Hyperparameters
 

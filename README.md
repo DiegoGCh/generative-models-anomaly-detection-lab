@@ -33,6 +33,39 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+### Checkpoints (pre-trained weights)
+
+Trained weights for all 15 classes are available here:
+[Google Drive - checkpoints/](https://drive.google.com/drive/folders/1jpYVJED45yUzopOt_WvAs22kEDuP0YYK?usp=drive_link)
+
+Download the `checkpoints/` folder and place it at the root of the repo:
+
+```
+Lab2/
+  checkpoints/       <-- put it here
+    bottle.pth
+    cable.pth
+    capsule.pth
+    ...
+  src/
+  main.py
+  ...
+```
+
+Then run the improved evaluation directly, no training needed:
+
+```bash
+# Evaluate all 15 classes with multi-scale per-pixel SSIM
+python main.py --eval-only --full
+
+# Evaluate a single class
+python main.py --eval-only --category hazelnut
+```
+
+Results and figures are saved to `results_improved/`.
+
+### Dataset
+
 Put the MVTec AD dataset in `Data/`. The folder structure should look like:
 
 ```

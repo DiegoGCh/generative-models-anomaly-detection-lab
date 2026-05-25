@@ -157,7 +157,7 @@ MVTec AD: 15 clases (objetos: `bottle`, `cable`, `screw`, `transistor`, ...; tex
 
 ### 6.2 Reglas de entrenamiento
 
-1. **Un modelo por clase.**
+1. **Un modelo por clase.** Es el protocolo estándar de MVTec y el esperado para este lab. Cada clase tiene distribución completamente distinta (bottle es un objeto oscuro con anillo brillante, hazelnut es textura organica marron, grid es patron periodico blanco/negro). Un modelo unico entrenado en todas aprenderia el promedio de todo y no sabria reconstruir bien ninguna clase especifica. Todos los papers de referencia (PatchCore, SPADE, CFlow, Bergmann et al. 2019) reportan resultados por clase con modelos separados.
 2. **Entrenar SOLO con `train/good/`.** Nunca tocar máscaras ni defectuosas.
 3. **Sin split de validación** — todo `train/good/` va a training. El umbral se calibra por barrido en test (ver sección 8).
 
@@ -169,6 +169,16 @@ Aplicar en training para evitar memorización (solo ~200-400 imágenes por clase
 - Rotación ±15°
 
 **NO usar:** elastic transform, distorsiones geométricas fuertes → cambian la estructura "normal" y confunden al modelo.
+
+**Cuidado con la rotacion:** para clases con objetos de orientacion fija (bottle, tile, metal_nut) la rotacion puede perjudicar la reconstruccion. El VAE promedia todas las orientaciones entrenadas → blob sin textura dirigida. Para esas clases, reducir a ±5° o eliminar. Para clases con variacion real de orientacion (hazelnut, screw) la rotacion es inevitable pero el problema del blob no tiene solucion dentro del marco VAE.
+
+**Test-Time Augmentation (TTA) — mejora gratuita sin reentrenar:**
+```python
+recon_orig = model.reconstruct(x)
+recon_flip = model.reconstruct(hflip(x))
+recon_final = 0.5 * recon_orig + 0.5 * hflip(recon_flip)
+```
+Promedia reconstrucciones de la imagen original y su flip horizontal. Reduce ruido en el mapa de anomalia sin reentrenar.
 
 ---
 
@@ -235,6 +245,29 @@ Normalización global por clase: imágenes sanas (error bajo) quedan en valores 
 Barrer ~50 valores de umbral uniformemente en [0,1], calcular F1 para cada uno, reportar el F1 al mejor umbral **por clase**. Documentar en el informe que se está eligiendo el operating point óptimo por clase.
 
 **Por qué no percentil de validación:** no hay split de validación (todo `train/good/` va a training). El barrido en test es más directo y robusto para F1 de segmentación.
+
+### 8.0 La curva F1 vs umbral — como interpretarla
+
+Para cada valor de threshold `t` en [0, 1]:
+- `t` bajo → casi todo el mapa supera el corte → muchos FP, precision baja, recall alta
+- `t` alto → casi nada supera el corte → pocos FP, precision alta, recall baja
+- El F1 combina ambos: penaliza tanto FP excesivos como FN excesivos
+
+```
+Mapa bueno (hazelnut F1=0.38):    Mapa malo (carpet F1=0.03):
+F1                                 F1
+ |      *                           |  * * * * * * *
+ |    *   *                         | *             *
+ |   *     *                        |
+ +-----------> threshold            +-----------> threshold
+   Pico claro → hay un t            Curva plana → no existe
+   donde defecto y normal           ningun t que separe defecto
+   se separan bien                  de normal
+```
+
+El F1 reportado es el del pico. Una curva plana significa que el mapa no discrimina — el problema es el mapa, no el threshold.
+
+**Esto NO es trampa:** es el protocolo estandar de MVTec. Se evalua la calidad del mapa, no la eleccion del umbral. En produccion se fijaria el umbral con un set de calibracion separado.
 
 ### 8.1 Limpieza morfológica (después del umbral)
 
@@ -314,8 +347,9 @@ F1 = 2·TP / ( 2·TP + FP + FN )
 |---|---|---|
 | LATENT_DIM=128, todas las clases | avg F1=0.080 | Baseline |
 | LATENT_DIM=64, clases borderline | avg F1<0.080 | 64 comprime demasiado, regresion en capsule |
-| Multi-scale per-pixel SSIM (alpha=0.0) | avg F1=0.140 | +75% sin reentrenar. Resultado final |
+| Multi-scale per-pixel SSIM (alpha=0.0) | avg F1=0.140 | +75% sin reentrenar. Mejor resultado sobre baseline |
 | Feature-space map (alpha=0.3) | avg F1=0.134 | Inconsistente: ayuda wood/capsule, penaliza hazelnut/leather |
+| Perceptual loss VGG16 + KL annealing (V2) | En curso (bottle=0.259, hazelnut=0.380) | Mejora clases con blob gris. No resuelve fallos estructurales |
 
 ### Fase A — Smoke test
 
@@ -369,6 +403,36 @@ Verificar al terminar smoke test:
 | Normalización | [0,1] |
 | Figuras | 3/clase: 1 good + 2 defectuosas |
 | Resultado final | avg F1=0.140 (baseline 0.080) |
+
+### Visualizacion de resultados — como leer las figuras
+
+Cada figura tiene 4 paneles: `Input | Reconstruction | Anomaly Map | Predicted Mask`
+
+**Anomaly Map (colormap "hot"):**
+- Negro → score bajo → reconstruccion casi perfecta → zona normal
+- Rojo → error medio
+- Amarillo/blanco → score alto → reconstruccion fallo → probable defecto
+
+**Predicted Mask:**
+- Blanco → el modelo predijo defecto aqui
+- Verde solido → ground truth (GT) del dataset — marcado externamente, no lo genera el modelo
+- Blanco + verde solapado → TP (deteccion correcta)
+- Blanco sin verde → FP (falso positivo)
+- Verde sin blanco → FN (defecto no detectado)
+- Fondo gris → nada (sin prediccion, sin GT)
+
+Las imagenes "good" no tienen overlay verde (no hay GT). Manchas blancas en good = falsos positivos — el modelo disparo donde no hay defecto. Cuantas manchas aparecen depende del threshold: a menor threshold mas FP.
+
+### Mejoras pendientes sin cambiar la arquitectura
+
+| Mejora | Clase que beneficia | Requiere reentrenar | Dificultad |
+|---|---|---|---|
+| Reducir rotacion a ±5° o eliminar | bottle, tile, metal_nut | Si | Baja |
+| Quitar RandomVerticalFlip | pill, capsule, screw | Si | Baja |
+| Color jitter (brightness/contrast ±10%) | todas | Si | Baja |
+| Test-Time Augmentation (TTA) | todas | No | Media |
+
+**TTA explicado:** en lugar de pasar la imagen una vez al modelo, se pasa la imagen original Y su version aumentada (ej. flip horizontal), se reconstruyen ambas, se promedia el mapa de error. El ruido del mapa tiende a ser inconsistente entre las dos versiones → se cancela. El defecto real aparece en ambas → se refuerza. Es tecnica estandar en vision por computadora cuando se quiere mejorar inferencia sin reentrenar.
 
 ### Fallos estructurales — no resolubles sin cambio de arquitectura
 

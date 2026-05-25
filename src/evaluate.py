@@ -346,7 +346,7 @@ def save_figures(model, test_loader, device, category: str,
                  sigma: float = 4.0,
                  morph_kernel: int = 5,
                  n_good: int = 1,
-                 n_defect: int = 2):
+                 n_defect: int = 5):
     """
     Guarda figuras: 1 good + n_defect defectuosas.
     Columnas: input | reconstruction | anomaly map | thresholded mask
@@ -398,11 +398,31 @@ def save_figures(model, test_loader, device, category: str,
         axes[0].imshow(img_np);              axes[0].set_title("Input");          axes[0].axis("off")
         axes[1].imshow(recon_np);            axes[1].set_title("Reconstruction"); axes[1].axis("off")
         axes[2].imshow(amap, cmap="hot");    axes[2].set_title("Anomaly Map");    axes[2].axis("off")
-        axes[3].imshow(pred_bin, cmap="gray"); axes[3].set_title("Thresholded"); axes[3].axis("off")
+        axes[3].imshow(pred_bin, cmap="gray"); axes[3].set_title("Predicted Mask"); axes[3].axis("off")
 
         if not is_good:
             gt_np = mask.squeeze().numpy()
-            axes[3].imshow(gt_np, cmap="Greens", alpha=0.4)  # GT overlay en verde
+
+            # Overlay RGBA: solo pixeles GT=1 reciben color verde solido.
+            # GT=0 queda completamente transparente → no agrega tinte al fondo.
+            gt_rgba = np.zeros((*gt_np.shape, 4), dtype=np.float32)
+            gt_rgba[gt_np > 0.5] = [0.0, 0.78, 0.2, 1.0]  # verde solido, alpha=1 → mismo tono siempre
+            axes[3].imshow(gt_rgba)
+
+            # Leyenda explicita: blanco = modelo, verde = ground truth
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor="white",           edgecolor="gray", label="Model prediction"),
+                Patch(facecolor=(0.0, 0.85, 0.2),  edgecolor="gray", label="Ground truth (GT)"),
+            ]
+            axes[3].legend(
+                handles=legend_elements,
+                loc="lower left",
+                fontsize=6,
+                framealpha=0.8,
+                handlelength=1.0,
+                handleheight=0.8,
+            )
 
         fname = f"{tag}_{good_saved if is_good else defect_saved}.png"
         fig.suptitle(f"{category} — {tag}", fontsize=12)

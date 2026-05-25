@@ -16,7 +16,7 @@ results/
 results_rerun/
 results_improved/
 results_rerun_improved/
-results_v2/
+# results_v2/ — incluido en repo (figuras finales V2)
 *.pth
 *.pt
 *.ckpt
